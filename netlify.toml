@@ -1,0 +1,7 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+# เช็คราคาทองอัตโนมัติทุกชั่วโมง แล้วส่ง Telegram ถ้าสัญญาณเปลี่ยน
+[functions."check-scheduled"]
+  schedule = "@hourly"

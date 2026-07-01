@@ -1,0 +1,9 @@
+{
+  "name": "gold-alert-bot-netlify",
+  "version": "1.0.0",
+  "private": true,
+  "description": "เว็บแจ้งเตือนสัญญาณทองคำ (XAU/USD) ผ่าน Telegram — Netlify Functions",
+  "dependencies": {
+    "@netlify/blobs": "^10.7.9"
+  }
+}
