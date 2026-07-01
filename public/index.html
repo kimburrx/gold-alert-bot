@@ -50,6 +50,18 @@
 <p class="muted">หมายเหตุ: ต้องตั้งค่า TWELVEDATA_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID ที่ Netlify → Site settings → Environment variables ก่อนใช้งาน</p>
 
 <script>
+function renderOpenPosition(p) {
+  const dirLabel = p.signal === 'BUY' ? '📈 BUY (long)' : '📉 SELL (short)';
+  const pnlClass = p.unrealizedPnlPoints > 0 ? 'signal-buy' : p.unrealizedPnlPoints < 0 ? 'signal-sell' : '';
+  const sign = p.unrealizedPnlPoints >= 0 ? '+' : '';
+  return `
+    <div class="row" style="margin-top:14px; border-top:1px solid #eee; padding-top:14px;">
+      <div><label>ไม้ที่เปิดอยู่</label>${dirLabel}</div>
+      <div><label>ราคาเข้า</label>${p.entryPrice} (${new Date(p.entryTime).toLocaleString('th-TH')})</div>
+      <div><label>กำไร/ขาดทุนตอนนี้ (ยังไม่ปิด)</label><span class="${pnlClass}">${sign}${p.unrealizedPnlPoints} จุด (${sign}${p.unrealizedPnlPct}%)</span></div>
+    </div>`;
+}
+
 async function checkNow() {
   const btn = document.getElementById('check-btn');
   const area = document.getElementById('status-area');
@@ -74,7 +86,8 @@ async function checkNow() {
         <div><label>EMA20</label>${d.emaFast}</div>
         <div><label>EMA50</label>${d.emaSlow}</div>
         <div><label>สัญญาณ</label>${signalHtml}</div>
-      </div>`;
+      </div>
+      ${d.openPosition ? renderOpenPosition(d.openPosition) : ''}`;
   } catch (e) {
     area.innerHTML = `<p class="error">เกิดข้อผิดพลาด: ${e.message}</p>`;
   }
