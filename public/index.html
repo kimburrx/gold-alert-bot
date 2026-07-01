@@ -26,23 +26,23 @@
 <body>
 
 <h1>🥇 Gold Alert Bot — แดชบอร์ด</h1>
-<p class="muted">เฝ้าราคา XAU/USD ทุกชั่วโมง วิเคราะห์ด้วย EMA20/EMA50 + RSI14 แล้วส่งแจ้งเตือนเข้า Telegram<br>
-บอทนี้ไม่เทรดเองและไม่แตะบัญชีคุณ เป็นเครื่องมือช่วยดูสัญญาณเท่านั้น ไม่ใช่คำแนะนำการลงทุน</p>
+<p class="muted">เฝ้าราคา XAU/USD พร้อมกัน 4 กรอบเวลา (15 นาที / 1 ชั่วโมง / 4 ชั่วโมง / 1 วัน) วิเคราะห์ด้วย EMA20/EMA50 + RSI14 แล้วส่งแจ้งเตือนเข้า Telegram ทุก 15 นาที<br>
+บอทนี้ไม่เทรดเองและไม่แตะบัญชีคุณ เป็นเครื่องมือช่วยดูสัญญาณเท่านั้น ไม่ใช่คำแนะนำการลงทุน — กรอบสั้น (15 นาที) สัญญาณถี่แต่หลอกง่ายกว่ากรอบยาว (4 ชั่วโมง/1 วัน)</p>
 
 <div class="card">
-  <h2>สถานะล่าสุด</h2>
+  <h2>สถานะล่าสุด (ทุกกรอบเวลา)</h2>
   <div id="status-area">
     <p class="muted">กำลังโหลด...</p>
   </div>
   <button id="check-btn" onclick="checkNow()">🔄 เช็คตอนนี้เลย</button>
-  <button id="test-btn" onclick="sendTest()">✉️ ส่งข้อความทดสอบเข้า Telegram</button>
-  <p class="muted">ระบบเช็คให้อัตโนมัติทุกชั่วโมงผ่าน Scheduled Function ของ Netlify แม้ไม่ได้เปิดหน้านี้ค้างไว้</p>
+  <button id="test-btn" onclick="sendTest()">✉️ ส่งข้อความทดสอบเข้า Telegram (กรอบ 1H)</button>
+  <p class="muted">ระบบเช็คให้อัตโนมัติทุก 15 นาทีผ่าน Scheduled Function ของ Netlify แม้ไม่ได้เปิดหน้านี้ค้างไว้</p>
 </div>
 
 <div class="card">
-  <h2>ทดสอบย้อนหลัง (Backtest)</h2>
-  <label>จำนวนแท่งย้อนหลัง (1H)</label>
-  <input id="outputsize" value="1000">
+  <h2>ทดสอบย้อนหลัง (Backtest — กรอบ 1H)</h2>
+  <label>จำนวนแท่งย้อนหลัง</label>
+  <input id="outputsize" value="3000">
   <button onclick="runBacktest()">📊 รัน Backtest</button>
   <div id="backtest-area" style="margin-top:14px;"></div>
 </div>
@@ -62,32 +62,41 @@ function renderOpenPosition(p) {
     </div>`;
 }
 
+function renderTimeframeBlock(tf) {
+  const signalHtml = tf.signal === 'BUY'
+    ? '<span class="signal-buy">📈 BUY</span>'
+    : tf.signal === 'SELL'
+      ? '<span class="signal-sell">📉 SELL</span>'
+      : 'ยังไม่มีสัญญาณ';
+  return `
+    <div style="border-top:1px solid #eee; padding-top:12px; margin-top:12px;">
+      <p style="font-weight:bold; margin:0 0 8px;">กรอบ ${tf.label}</p>
+      <div class="row">
+        <div><label>ราคาปิดล่าสุด</label>${tf.price}</div>
+        <div><label>RSI(14)</label>${tf.rsi}</div>
+        <div><label>สัญญาณ</label>${signalHtml}</div>
+      </div>
+      <div class="row">
+        <div><label>EMA20</label>${tf.emaFast}</div>
+        <div><label>EMA50</label>${tf.emaSlow}</div>
+        <div></div>
+      </div>
+      ${tf.openPosition ? renderOpenPosition(tf.openPosition) : ''}
+    </div>`;
+}
+
 async function checkNow() {
   const btn = document.getElementById('check-btn');
   const area = document.getElementById('status-area');
   btn.disabled = true;
-  area.innerHTML = '<p class="muted">กำลังเช็ค...</p>';
+  area.innerHTML = '<p class="muted">กำลังเช็คทุกกรอบเวลา...</p>';
   try {
     const r = await fetch('/.netlify/functions/check');
     const d = await r.json();
     if (!d.ok) throw new Error(d.error);
-    const signalHtml = d.signal === 'BUY'
-      ? '<span class="signal-buy">📈 BUY</span>'
-      : d.signal === 'SELL'
-        ? '<span class="signal-sell">📉 SELL</span>'
-        : 'ยังไม่มีสัญญาณ';
-    area.innerHTML = `
-      <div class="row">
-        <div><label>เช็คล่าสุด</label>${new Date(d.checkedAt).toLocaleString('th-TH')}</div>
-        <div><label>ราคาปิดล่าสุด</label>${d.price}</div>
-        <div><label>RSI(14)</label>${d.rsi}</div>
-      </div>
-      <div class="row">
-        <div><label>EMA20</label>${d.emaFast}</div>
-        <div><label>EMA50</label>${d.emaSlow}</div>
-        <div><label>สัญญาณ</label>${signalHtml}</div>
-      </div>
-      ${d.openPosition ? renderOpenPosition(d.openPosition) : ''}`;
+    let html = `<p class="muted">เช็คล่าสุด: ${new Date(d.checkedAt).toLocaleString('th-TH')}</p>`;
+    html += d.timeframes.map(renderTimeframeBlock).join('');
+    area.innerHTML = html;
   } catch (e) {
     area.innerHTML = `<p class="error">เกิดข้อผิดพลาด: ${e.message}</p>`;
   }
@@ -111,22 +120,29 @@ async function sendTest() {
 
 async function runBacktest() {
   const area = document.getElementById('backtest-area');
-  const outputsize = document.getElementById('outputsize').value || 1000;
+  const outputsize = document.getElementById('outputsize').value || 3000;
   area.innerHTML = '<p class="muted">กำลังรัน backtest...</p>';
   try {
     const r = await fetch(`/.netlify/functions/backtest?outputsize=${outputsize}`);
     const d = await r.json();
     if (!d.ok) throw new Error(d.error);
     const s = d.stats;
+    const byType = d.statsByType || {};
+    const buyS = byType.BUY || {};
+    const sellS = byType.SELL || {};
     area.innerHTML = `
       <div class="row">
-        <div><label>จำนวนไม้</label>${s.totalTrades}</div>
-        <div><label>อัตราชนะ</label>${s.winRatePct}%</div>
+        <div><label>จำนวนไม้ทั้งหมด</label>${s.totalTrades}</div>
+        <div><label>อัตราชนะรวม</label>${s.winRatePct}%</div>
         <div><label>กำไร/ขาดทุนสะสม</label>${s.cumulativeReturnPct}%</div>
         <div><label>Max Drawdown</label>${s.maxDrawdownPct}%</div>
       </div>
+      <div class="row" style="margin-top:10px; border-top:1px solid #eee; padding-top:10px;">
+        <div><label>สัญญาณ BUY (${buyS.totalTrades || 0} ครั้ง)</label>${buyS.totalTrades ? `ชนะ ${buyS.winRatePct}%` : '-'}</div>
+        <div><label>สัญญาณ SELL (${sellS.totalTrades || 0} ครั้ง)</label>${sellS.totalTrades ? `ชนะ ${sellS.winRatePct}%` : '-'}</div>
+      </div>
       <p class="muted">ช่วงข้อมูล: ${d.rangeStart} ถึง ${d.rangeEnd}<br>
-      ตัวเลขนี้ยังไม่รวมสเปรด/ค่าคอมมิชชั่น/slippage ผลจริงจะแย่กว่านี้เสมอ</p>`;
+      ตัวเลขนี้ยังไม่รวมสเปรด/ค่าคอมมิชชั่น/slippage ผลจริงจะแย่กว่านี้เสมอ ไม่ใช่การการันตีผลในอนาคต</p>`;
   } catch (e) {
     area.innerHTML = `<p class="error">เกิดข้อผิดพลาด: ${e.message}</p>`;
   }

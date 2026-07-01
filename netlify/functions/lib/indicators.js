@@ -4,6 +4,9 @@
 const EMA_FAST = 20;
 const EMA_SLOW = 50;
 const RSI_PERIOD = 14;
+const ATR_PERIOD = 14;
+const SL_ATR_MULT = 1.5; // stop-loss ห่างจากราคาเข้า 1.5 เท่าของ ATR
+const TP_ATR_MULT = 2.25; // take-profit ห่างจากราคาเข้า 2.25 เท่าของ ATR (risk:reward ~ 1:1.5)
 
 function emaSeries(values, period) {
   const k = 2 / (period + 1);
@@ -40,18 +43,55 @@ function rsiSeries(values, period) {
   });
 }
 
+// Average True Range — ใช้วัดความผันผวน เพื่อคำนวณจุด stop-loss / take-profit
+function atrSeries(bars, period) {
+  const n = bars.length;
+  const tr = new Array(n);
+  tr[0] = bars[0].high - bars[0].low;
+  for (let i = 1; i < n; i++) {
+    const highLow = bars[i].high - bars[i].low;
+    const highPrevClose = Math.abs(bars[i].high - bars[i - 1].close);
+    const lowPrevClose = Math.abs(bars[i].low - bars[i - 1].close);
+    tr[i] = Math.max(highLow, highPrevClose, lowPrevClose);
+  }
+
+  const alpha = 1 / period;
+  const atr = new Array(n);
+  atr[0] = tr[0];
+  for (let i = 1; i < n; i++) {
+    atr[i] = alpha * tr[i] + (1 - alpha) * atr[i - 1];
+  }
+  return atr;
+}
+
 // bars: [{ datetime, open, high, low, close }, ...] เรียงจากเก่า -> ใหม่
 function computeIndicators(bars) {
   const closes = bars.map((b) => b.close);
   const emaFast = emaSeries(closes, EMA_FAST);
   const emaSlow = emaSeries(closes, EMA_SLOW);
   const rsi = rsiSeries(closes, RSI_PERIOD);
+  const atr = atrSeries(bars, ATR_PERIOD);
   return bars.map((b, i) => ({
     ...b,
     ema_fast: emaFast[i],
     ema_slow: emaSlow[i],
     rsi: rsi[i],
+    atr: atr[i],
   }));
+}
+
+// คำนวณจุด stop-loss / take-profit แนะนำ จากราคาเข้าและ ATR ปัจจุบัน
+function computeSlTp(signal, entryPrice, atr) {
+  if (signal === "BUY") {
+    return {
+      stopLoss: entryPrice - SL_ATR_MULT * atr,
+      takeProfit: entryPrice + TP_ATR_MULT * atr,
+    };
+  }
+  return {
+    stopLoss: entryPrice + SL_ATR_MULT * atr,
+    takeProfit: entryPrice - TP_ATR_MULT * atr,
+  };
 }
 
 function signalAt(prev, curr) {
@@ -84,4 +124,13 @@ function generateAllSignals(bars) {
   return signals;
 }
 
-module.exports = { EMA_FAST, EMA_SLOW, RSI_PERIOD, computeIndicators, detectSignal, generateAllSignals };
+module.exports = {
+  EMA_FAST,
+  EMA_SLOW,
+  RSI_PERIOD,
+  ATR_PERIOD,
+  computeIndicators,
+  detectSignal,
+  generateAllSignals,
+  computeSlTp,
+};

@@ -2,6 +2,6 @@
   publish = "public"
   functions = "netlify/functions"
 
-# เช็คราคาทองอัตโนมัติทุกชั่วโมง แล้วส่ง Telegram ถ้าสัญญาณเปลี่ยน
+# เช็คราคาทองอัตโนมัติทุก 15 นาที (เช็คพร้อมกัน 4 กรอบเวลา: 15min/1h/4h/1day) แล้วส่ง Telegram ถ้าสัญญาณของกรอบไหนเปลี่ยน
 [functions."check-scheduled"]
-  schedule = "@hourly"
+  schedule = "*/15 * * * *"

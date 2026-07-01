@@ -1,49 +1,114 @@
-// check-scheduled.js — รันอัตโนมัติทุกชั่วโมงตามที่ตั้งไว้ใน netlify.toml (schedule = "@hourly")
-// เช็คราคา + สัญญาณ แล้วส่ง Telegram เฉพาะตอนสัญญาณเปลี่ยนจากครั้งก่อน (กันแจ้งเตือนซ้ำ)
-// เก็บ "ไม้ที่เปิดอยู่" (open_position) ไว้ใน Netlify Blobs เพราะ Function เป็น stateless คนละ instance กันทุกครั้งที่รัน
-// พอมีสัญญาณใหม่มาสวนทางกับไม้เดิม จะสรุปผลไม้เดิม (กำไร/ขาดทุน) ก่อน แล้วค่อยเปิดไม้ใหม่
+// check-scheduled.js — รันอัตโนมัติทุก 15 นาทีตามที่ตั้งไว้ใน netlify.toml
+// เช็คทีละกรอบเวลา (15min, 1h, 4h, 1day) แยกจากกันอิสระ แต่ละกรอบมี "ไม้ที่เปิดอยู่" ของตัวเอง
+// ส่ง Telegram เฉพาะตอนสัญญาณของกรอบนั้นเปลี่ยนจากครั้งก่อน (กันแจ้งเตือนซ้ำ)
 
 const { getStore } = require("@netlify/blobs");
 const { fetchOhlc } = require("./lib/twelvedata");
-const { computeIndicators, detectSignal } = require("./lib/indicators");
-const { sendTelegramMessage, formatAlert, formatCloseAlert } = require("./lib/telegram");
+const { computeIndicators, detectSignal, generateAllSignals, computeSlTp } = require("./lib/indicators");
+const { simulateTrades, summarizeByEntrySignal } = require("./lib/backtestCore");
+const { sendTelegramMessage, sendTelegramPhoto, formatAlert, formatCloseAlert } = require("./lib/telegram");
+const { buildChartImageUrl } = require("./lib/chart");
+const { TIMEFRAMES } = require("./lib/timeframes");
+
+const MAX_LIVE_HISTORY = 500; // กันไม่ให้ Blobs โตไม่มีที่สิ้นสุด
+
+async function processTimeframe(tf, store) {
+  const bars = await fetchOhlc({ interval: tf.interval, outputsize: tf.outputsize });
+  const withIndicators = computeIndicators(bars);
+  const { signal, row } = detectSignal(withIndicators);
+
+  if (!signal) {
+    return `[${tf.key}] no signal`;
+  }
+
+  const posKey = `open_position_${tf.key}`;
+  const historyKey = `live_trade_history_${tf.key}`;
+
+  const openPosRaw = await store.get(posKey);
+  const openPos = openPosRaw ? JSON.parse(openPosRaw) : null;
+
+  if (openPos && openPos.signal === signal) {
+    return `[${tf.key}] signal ${signal} already notified, position still open`;
+  }
+
+  const liveHistoryRaw = await store.get(historyKey);
+  let liveHistory = liveHistoryRaw ? JSON.parse(liveHistoryRaw) : [];
+
+  // ถ้ามีไม้เปิดอยู่แล้วสัญญาณใหม่สวนทาง ให้สรุปผลไม้เดิมก่อน แล้วบันทึกผลจริงลงประวัติสะสม
+  if (openPos) {
+    const closeMessage = formatCloseAlert(openPos, row, tf.label);
+    await sendTelegramMessage(closeMessage);
+
+    const isLong = openPos.signal === "BUY";
+    const pnlPct = isLong
+      ? ((row.close - openPos.entryPrice) / openPos.entryPrice) * 100
+      : ((openPos.entryPrice - row.close) / openPos.entryPrice) * 100;
+
+    liveHistory.push({
+      type: isLong ? "LONG" : "SHORT",
+      entrySignal: openPos.signal,
+      entry: openPos.entryPrice,
+      exit: row.close,
+      entryTime: openPos.entryTime,
+      exitTime: row.datetime,
+      pnlPct,
+    });
+    if (liveHistory.length > MAX_LIVE_HISTORY) {
+      liveHistory = liveHistory.slice(-MAX_LIVE_HISTORY);
+    }
+    await store.set(historyKey, JSON.stringify(liveHistory));
+  }
+
+  // คำนวณจุด stop-loss / take-profit แนะนำ จาก ATR ปัจจุบัน
+  const slTp = computeSlTp(signal, row.close, row.atr);
+
+  // สถิติ backtest (จำลองย้อนหลังจากข้อมูลชุดที่เพิ่งดึงมา ไม่ต้องยิง API เพิ่ม)
+  const allSignals = generateAllSignals(withIndicators);
+  const backtestTrades = simulateTrades(allSignals);
+  const backtestStatsByType = summarizeByEntrySignal(backtestTrades);
+
+  // สถิติของจริงที่บอทเคยส่งสัญญาณแบบนี้ไปแล้ว สะสมตั้งแต่เริ่มใช้งาน (แยกตามกรอบเวลา)
+  const liveStatsByType = summarizeByEntrySignal(liveHistory);
+
+  const entryMessage = formatAlert(
+    signal,
+    row,
+    slTp,
+    backtestStatsByType[signal],
+    liveStatsByType[signal],
+    tf.label
+  );
+
+  // สร้างรูปกราฟตอนเกิดสัญญาณ แล้วส่งเป็นรูปก่อน ตามด้วยข้อความรายละเอียด
+  try {
+    const chartUrl = await buildChartImageUrl(withIndicators, signal, row.close, tf.label);
+    const shortCaption = `${signal === "BUY" ? "📈 BUY" : "📉 SELL"} XAU/USD (${tf.label}) ที่ ${row.close.toFixed(2)}`;
+    await sendTelegramPhoto(chartUrl, shortCaption);
+  } catch (chartErr) {
+    console.error(`[${tf.key}] สร้าง/ส่งรูปกราฟไม่สำเร็จ:`, chartErr.message);
+    // ไม่ให้ทั้งฟังก์ชันล้มเหลวแค่เพราะรูปกราฟมีปัญหา ยังส่งข้อความหลักต่อได้
+  }
+
+  await sendTelegramMessage(entryMessage);
+
+  await store.set(posKey, JSON.stringify({ signal, entryPrice: row.close, entryTime: row.datetime }));
+
+  return `[${tf.key}] sent ${signal} alert`;
+}
 
 exports.handler = async () => {
-  try {
-    const bars = await fetchOhlc({ outputsize: 200 });
-    const withIndicators = computeIndicators(bars);
-    const { signal, row } = detectSignal(withIndicators);
+  const store = getStore("gold-bot-state");
+  const results = [];
 
-    if (!signal) {
-      return { statusCode: 200, body: "no signal" };
+  for (const tf of TIMEFRAMES) {
+    try {
+      const r = await processTimeframe(tf, store);
+      results.push(r);
+    } catch (err) {
+      console.error(`[${tf.key}] error:`, err);
+      results.push(`[${tf.key}] error: ${err.message}`);
     }
-
-    const store = getStore("gold-bot-state");
-    const openPosRaw = await store.get("open_position");
-    const openPos = openPosRaw ? JSON.parse(openPosRaw) : null;
-
-    if (openPos && openPos.signal === signal) {
-      return { statusCode: 200, body: `signal ${signal} already notified, position still open` };
-    }
-
-    // ถ้ามีไม้เปิดอยู่แล้วสัญญาณใหม่สวนทาง ให้สรุปผลไม้เดิมก่อน
-    if (openPos) {
-      const closeMessage = formatCloseAlert(openPos, row);
-      await sendTelegramMessage(closeMessage);
-    }
-
-    // เปิดไม้ใหม่ตามสัญญาณล่าสุด
-    const entryMessage = formatAlert(signal, row);
-    await sendTelegramMessage(entryMessage);
-
-    await store.set(
-      "open_position",
-      JSON.stringify({ signal, entryPrice: row.close, entryTime: row.datetime })
-    );
-
-    return { statusCode: 200, body: `sent ${signal} alert` };
-  } catch (err) {
-    console.error(err);
-    return { statusCode: 500, body: err.message };
   }
+
+  return { statusCode: 200, body: results.join(" | ") };
 };
