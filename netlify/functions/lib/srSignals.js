@@ -21,7 +21,7 @@ function srLevelsAt(bars, i, lookback) {
   return { resistance, support };
 }
 
-function srSignalAt(bars, i, lookback) {
+function srSignalAt(bars, i, lookback, hasOpenPosition = false) {
   if (i < 1) return null;
   const levels = srLevelsAt(bars, i, lookback);
   if (!levels) return null;
@@ -54,6 +54,12 @@ function srSignalAt(bars, i, lookback) {
   else if (curr.low <= support + buffer && curr.close > support && curr.close > curr.open) {
     candidate = { signal: "BUY", type: "bounce", level: support };
   }
+  // ยังไม่มีเหตุการณ์สดๆ ในแท่งนี้ — ถ้ายังไม่เคยมีไม้เปิดอยู่เลย ให้เช็คว่าตอนนี้ราคาอยู่เหนือแนวต้าน/ใต้แนวรับ
+  // ของช่วงย้อนหลังอยู่แล้วหรือไม่ (คือทะลุไปตั้งแต่ก่อนบอทจะเริ่มดูกรอบนี้) เพื่อไม่ให้พลาดเทรนด์ที่กำลังเกิดอยู่
+  else if (!hasOpenPosition) {
+    if (curr.close > resistance) candidate = { signal: "BUY", type: "breakout", level: resistance };
+    else if (curr.close < support) candidate = { signal: "SELL", type: "breakout", level: support };
+  }
 
   if (!candidate) return null;
 
@@ -65,9 +71,10 @@ function srSignalAt(bars, i, lookback) {
 }
 
 // คืนสัญญาณของแท่งล่าสุดเท่านั้น (ใช้กับการเช็คแบบ real-time)
-function detectSrSignal(bars, lookback = LOOKBACK) {
+// hasOpenPosition: ถ้ายังไม่เคยมีไม้เปิดอยู่ของกรอบ+กลยุทธ์นี้เลย จะเช็คสถานะปัจจุบันด้วย ไม่ใช่แค่เหตุการณ์สดของแท่งนี้ (ดู srSignalAt)
+function detectSrSignal(bars, lookback = LOOKBACK, hasOpenPosition = false) {
   const i = bars.length - 1;
-  const result = srSignalAt(bars, i, lookback);
+  const result = srSignalAt(bars, i, lookback, hasOpenPosition);
   return {
     signal: result ? result.signal : null,
     type: result ? result.type : null,
@@ -77,10 +84,12 @@ function detectSrSignal(bars, lookback = LOOKBACK) {
 }
 
 // สแกนทั้งชุดข้อมูล คืนทุกจุดที่เกิดสัญญาณ (ใช้กับ backtest)
+// หมายเหตุ: บังคับ hasOpenPosition=true เสมอ เพื่อปิดโหมด "จับตามทัน" — ตอน backtest เราสแกนต่อเนื่องมีบริบทครบ
+// อยู่แล้ว จึงต้องการแค่จุดเหตุการณ์สดๆ (ทะลุ/กลับตัว) เท่านั้น ไม่งั้นจะนับซ้ำทุกแท่งตอนราคายืนเหนือแนวต้านต่อเนื่องนาน
 function generateAllSrSignals(bars, lookback = LOOKBACK) {
   const signals = [];
   for (let i = lookback; i < bars.length; i++) {
-    const r = srSignalAt(bars, i, lookback);
+    const r = srSignalAt(bars, i, lookback, true);
     if (r) {
       signals.push({
         index: i,
@@ -95,4 +104,4 @@ function generateAllSrSignals(bars, lookback = LOOKBACK) {
   return signals;
 }
 
-module.exports = { detectSrSignal, generateAllSrSignals, LOOKBACK };
+module.exports = { detectSrSignal, generateAllSrSignals, srLevelsAt, LOOKBACK };

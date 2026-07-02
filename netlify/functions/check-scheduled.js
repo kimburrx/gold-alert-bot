@@ -11,21 +11,62 @@ const { sendTelegramMessage, sendTelegramPhoto, formatAlert, formatCloseAlert } 
 const { buildChartImageUrl } = require("./lib/chart");
 const { TIMEFRAMES } = require("./lib/timeframes");
 const { STRATEGIES } = require("./lib/strategies");
+const { watchTrend, watchSr } = require("./lib/watchSignals");
+const { srLevelsAt, LOOKBACK } = require("./lib/srSignals");
+const { formatDuration, avgHoldingDuration, nextTarget, cautionFlags } = require("./lib/analysis");
 
 const MAX_LIVE_HISTORY = 500; // กันไม่ให้ Blobs โตไม่มีที่สิ้นสุด
 
-async function processStrategy(tf, strategy, withIndicators, store) {
-  const { signal, type, level, row } = strategy.detect(withIndicators);
+// แจ้งเตือน "จับตา" ล่วงหน้า ก่อนสัญญาณจริงจะเกิด — ส่งครั้งเดียวต่อรอบที่เข้าเงื่อนไข (ไม่สแปมทุก 15 นาที)
+// ใช้ flag ใน Blobs เก็บว่ากำลัง "จับตาอยู่" หรือไม่ พอเงื่อนไขหายไป (ไกลออกจากจุดนั้นแล้ว) จะรีเซ็ต ให้เตือนใหม่ได้รอบหน้า
+async function processWatch(tf, withIndicators, store) {
+  const messages = [];
 
-  if (!signal) {
-    return `[${tf.key}/${strategy.key}] no signal`;
+  const trendKey = `watch_trend_${tf.key}`;
+  const trendWatch = watchTrend(withIndicators);
+  const trendFlag = await store.get(trendKey);
+  if (trendWatch && !trendFlag) {
+    await sendTelegramMessage(
+      `[Gold Watch] 👀 จับตา (กรอบ ${tf.label} · เทรนด์ EMA20/50+RSI)\n${trendWatch.message}\n` +
+        `ราคาปัจจุบัน: ${trendWatch.row.close.toFixed(2)}\n` +
+        `-- ยังไม่ใช่สัญญาณเข้าไม้ รอข้อความสัญญาณจริงแยกต่างหาก --`
+    );
+    await store.set(trendKey, "1");
+    messages.push(`[${tf.key}/trend] watch sent`);
+  } else if (!trendWatch && trendFlag) {
+    await store.set(trendKey, "");
   }
 
+  const srKey = `watch_sr_${tf.key}`;
+  const srWatch = watchSr(withIndicators, srLevelsAt, LOOKBACK);
+  const srFlag = await store.get(srKey);
+  if (srWatch && !srFlag) {
+    await sendTelegramMessage(
+      `[Gold Watch] 👀 จับตา (กรอบ ${tf.label} · แนวรับ-แนวต้าน)\n${srWatch.message}\n` +
+        `ราคาปัจจุบัน: ${srWatch.row.close.toFixed(2)}\n` +
+        `-- ยังไม่ใช่สัญญาณเข้าไม้ รอข้อความสัญญาณจริงแยกต่างหาก --`
+    );
+    await store.set(srKey, "1");
+    messages.push(`[${tf.key}/sr] watch sent`);
+  } else if (!srWatch && srFlag) {
+    await store.set(srKey, "");
+  }
+
+  return messages;
+}
+
+async function processStrategy(tf, strategy, withIndicators, store) {
   const posKey = `open_position_${tf.key}_${strategy.key}`;
   const historyKey = `live_trade_history_${tf.key}_${strategy.key}`;
 
   const openPosRaw = await store.get(posKey);
   const openPos = openPosRaw ? JSON.parse(openPosRaw) : null;
+
+  const { signal, type, level, row } = strategy.detect(withIndicators, !!openPos);
+
+  if (!signal) {
+    return `[${tf.key}/${strategy.key}] no signal`;
+  }
 
   if (openPos && openPos.signal === signal) {
     return `[${tf.key}/${strategy.key}] signal ${signal} already notified, position still open`;
@@ -72,6 +113,13 @@ async function processStrategy(tf, strategy, withIndicators, store) {
 
   const strategyInfo = { label: strategy.label, type, level };
 
+  // บทวิเคราะห์เสริม: เป้าหมายถัดไปจากแนวรับ-แนวต้านที่กว้างกว่า, ระยะเวลาถือครองเฉลี่ยจาก backtest จริง, ข้อควรระวัง
+  const analysis = {
+    nextTargetPrice: nextTarget(signal, row.close, srLevelsAt, withIndicators),
+    avgHoldDuration: formatDuration(avgHoldingDuration(backtestTrades, signal)),
+    cautionFlags: cautionFlags({ signal, row, backtestStats: backtestStatsByType[signal] }),
+  };
+
   const entryMessage = formatAlert(
     signal,
     row,
@@ -79,7 +127,8 @@ async function processStrategy(tf, strategy, withIndicators, store) {
     backtestStatsByType[signal],
     liveStatsByType[signal],
     tf.label,
-    strategyInfo
+    strategyInfo,
+    analysis
   );
 
   // สร้างรูปกราฟตอนเกิดสัญญาณ แล้วส่งเป็นรูปก่อน ตามด้วยข้อความรายละเอียด
@@ -114,6 +163,15 @@ async function processTimeframe(tf, store) {
       results.push(`[${tf.key}/${strategy.key}] error: ${err.message}`);
     }
   }
+
+  try {
+    const watchResults = await processWatch(tf, withIndicators, store);
+    results.push(...(watchResults.length ? watchResults : [`[${tf.key}] watch: nothing new`]));
+  } catch (err) {
+    console.error(`[${tf.key}] watch error:`, err);
+    results.push(`[${tf.key}] watch error: ${err.message}`);
+  }
+
   return results.join(" | ");
 }
 

@@ -58,7 +58,8 @@ function formatStatsBlock(title, stats) {
 // timeframeLabel: ข้อความกรอบเวลา เช่น "15 นาที", "1 ชั่วโมง", "4 ชั่วโมง", "1 วัน"
 // strategyInfo: { label, type, level } (optional) — บอกว่าสัญญาณนี้มาจากกลยุทธ์ไหน
 //   type: "breakout" | "bounce" | null, level: ราคาแนวรับ/แนวต้านที่เกี่ยวข้อง
-function formatAlert(signal, row, slTp, backtestStats, liveStats, timeframeLabel, strategyInfo) {
+// analysis: { nextTargetPrice, avgHoldDuration, cautionFlags } (optional) — บทวิเคราะห์เสริม จาก lib/analysis.js
+function formatAlert(signal, row, slTp, backtestStats, liveStats, timeframeLabel, strategyInfo, analysis) {
   const arrow = signal === "BUY" ? "📈 BUY" : "📉 SELL";
 
   const strategyLine = strategyInfo && strategyInfo.label ? `กลยุทธ์: ${strategyInfo.label}\n` : "";
@@ -92,6 +93,25 @@ function formatAlert(signal, row, slTp, backtestStats, liveStats, timeframeLabel
     if (backtestStats) msg += formatStatsBlock("• ย้อนหลัง (backtest จำลอง)", backtestStats);
     if (liveStats) msg += formatStatsBlock("• ของจริงตั้งแต่เปิดบอท (forward)", liveStats);
     msg += `(สถิติอดีต ไม่ใช่การการันตีผลในอนาคต)\n`;
+  }
+
+  if (analysis && (analysis.nextTargetPrice != null || analysis.avgHoldDuration)) {
+    msg += `\n📐 บทวิเคราะห์เพิ่มเติม:\n`;
+    if (analysis.nextTargetPrice != null) {
+      const dist = Math.abs(analysis.nextTargetPrice - row.close);
+      msg += `• เป้าหมายถัดไป (แนวรับ/แนวต้านที่กว้างกว่า): ${analysis.nextTargetPrice.toFixed(2)} (ห่างจากราคาเข้า ${dist.toFixed(2)} จุด — จุดอ้างอิงเชิงโครงสร้าง ไม่ใช่การพยากรณ์ว่าจะไปถึงจริง)\n`;
+    }
+    if (analysis.avgHoldDuration) {
+      msg += `• ระยะเวลาถือครองเฉลี่ยของไม้แบบนี้ (จาก backtest): ${analysis.avgHoldDuration}\n`;
+    }
+    msg += `• ทางเลือก: เก็บสั้นตาม TP ด้านบน หรือถือต่อตามเทรนด์ไปทางเป้าหมายถัดไป (ยิ่งถือนาน ความเสี่ยงโดนสวนยิ่งสูงขึ้น) เลือกตามความเสี่ยงที่รับได้เอง\n`;
+  }
+
+  if (analysis && analysis.cautionFlags && analysis.cautionFlags.length > 0) {
+    msg += `\n⚠️ ข้อควรระวัง:\n`;
+    for (const flag of analysis.cautionFlags) {
+      msg += `• ${flag}\n`;
+    }
   }
 
   msg += `-- ตรวจสอบกราฟด้วยตัวเองก่อนตัดสินใจเสมอ ไม่ใช่คำแนะนำการลงทุน --`;

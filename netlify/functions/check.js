@@ -8,6 +8,8 @@ const { computeIndicators } = require("./lib/indicators");
 const { sendTelegramMessage, formatAlert } = require("./lib/telegram");
 const { TIMEFRAMES } = require("./lib/timeframes");
 const { STRATEGIES } = require("./lib/strategies");
+const { watchTrend, watchSr } = require("./lib/watchSignals");
+const { srLevelsAt, LOOKBACK } = require("./lib/srSignals");
 
 exports.handler = async (event) => {
   try {
@@ -23,23 +25,16 @@ exports.handler = async (event) => {
 
       const strategyResults = [];
       for (const strategy of STRATEGIES) {
-        const { signal, type, level, row } = strategy.detect(withIndicators);
-
-        if (sendTest && tf.key === "1h" && strategy.key === "trend") {
-          const message = signal
-            ? formatAlert(signal, row, null, null, null, tf.label, { label: strategy.label, type, level })
-            : `[Gold Alert] ทดสอบการเชื่อมต่อ — ยังไม่มีสัญญาณตอนนี้ (กรอบ ${tf.label})\nราคาปิดล่าสุด: ${row.close.toFixed(2)}`;
-          await sendTelegramMessage(message);
-          testMessageResult = "sent";
-        }
-
-        // ดึงไม้ที่เปิดอยู่ของกรอบ+กลยุทธ์นี้ (ถ้ามี) มาโชว์กำไร/ขาดทุนที่ยังไม่ปิดให้ดูด้วย
+        // ดึงไม้ที่เปิดอยู่ของกรอบ+กลยุทธ์นี้ก่อน (ถ้ามี) ทั้งเพื่อโชว์กำไร/ขาดทุนที่ยังไม่ปิด
+        // และเพื่อบอก strategy.detect() ว่ายังไม่เคยมีไม้เปิดมาก่อนหรือเปล่า (ใช้เปิดโหมด "จับตามทัน")
         let openPosition = null;
+        let hasOpenPosition = false;
         try {
           const raw = await store.get(`open_position_${tf.key}_${strategy.key}`);
           if (raw) {
+            hasOpenPosition = true;
             const pos = JSON.parse(raw);
-            const pnlPoints = pos.signal === "BUY" ? row.close - pos.entryPrice : pos.entryPrice - row.close;
+            const pnlPoints = pos.signal === "BUY" ? withIndicators[withIndicators.length - 1].close - pos.entryPrice : pos.entryPrice - withIndicators[withIndicators.length - 1].close;
             const pnlPct = (pnlPoints / pos.entryPrice) * 100;
             openPosition = {
               signal: pos.signal,
@@ -53,6 +48,16 @@ exports.handler = async (event) => {
           // ไม่มี Blobs หรืออ่านไม่ได้ ไม่เป็นไร แค่ไม่โชว์ส่วนนี้
         }
 
+        const { signal, type, level, row } = strategy.detect(withIndicators, hasOpenPosition);
+
+        if (sendTest && tf.key === "1h" && strategy.key === "trend") {
+          const message = signal
+            ? formatAlert(signal, row, null, null, null, tf.label, { label: strategy.label, type, level })
+            : `[Gold Alert] ทดสอบการเชื่อมต่อ — ยังไม่มีสัญญาณตอนนี้ (กรอบ ${tf.label})\nราคาปิดล่าสุด: ${row.close.toFixed(2)}`;
+          await sendTelegramMessage(message);
+          testMessageResult = "sent";
+        }
+
         strategyResults.push({
           key: strategy.key,
           label: strategy.label,
@@ -63,6 +68,9 @@ exports.handler = async (event) => {
         });
       }
 
+      const trendWatch = watchTrend(withIndicators);
+      const srWatch = watchSr(withIndicators, srLevelsAt, LOOKBACK);
+
       timeframeResults.push({
         key: tf.key,
         label: tf.label,
@@ -71,6 +79,10 @@ exports.handler = async (event) => {
         emaSlow: Number(lastRow.ema_slow.toFixed(2)),
         rsi: Number(lastRow.rsi.toFixed(1)),
         strategies: strategyResults,
+        watch: {
+          trend: trendWatch ? trendWatch.message : null,
+          sr: srWatch ? srWatch.message : null,
+        },
       });
     }
 

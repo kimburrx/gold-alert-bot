@@ -104,13 +104,24 @@ function signalAt(prev, curr) {
 }
 
 // คืนสัญญาณของแท่งล่าสุดเท่านั้น (ใช้กับการเช็คแบบ real-time)
-function detectSignal(bars) {
+// hasOpenPosition: ถ้ากรอบเวลานี้ยังไม่เคยมีไม้เปิดอยู่เลย (ยังไม่เคยส่งสัญญาณมาก่อน)
+//   ให้เช็ค "สถานะปัจจุบัน" ด้วย ไม่ใช่แค่จุดตัดสดๆ ของแท่งนี้เท่านั้น
+//   เพราะถ้าเทรนด์ตัดขึ้นไปแล้วตั้งแต่ก่อนบอทจะเริ่มดู (หรือก่อน deploy กลยุทธ์นี้) บอทจะไม่มีทางจับจุดตัดจริงได้อีกเลย
+//   จนกว่าจะเกิดจุดตัดใหม่ ซึ่งอาจไม่เกิดอีกนาน ทำให้พลาดเทรนด์ที่กำลังเกิดอยู่ไปเฉยๆ
+function detectSignal(bars, hasOpenPosition = false) {
   const minLen = Math.max(EMA_SLOW, RSI_PERIOD) + 2;
   if (bars.length < minLen) return { signal: null, row: bars[bars.length - 1] };
 
   const prev = bars[bars.length - 2];
   const curr = bars[bars.length - 1];
-  return { signal: signalAt(prev, curr), row: curr };
+  let signal = signalAt(prev, curr);
+
+  if (!signal && !hasOpenPosition) {
+    if (curr.ema_fast > curr.ema_slow && curr.rsi >= 45 && curr.rsi <= 70) signal = "BUY";
+    else if (curr.ema_fast < curr.ema_slow && curr.rsi >= 30 && curr.rsi <= 55) signal = "SELL";
+  }
+
+  return { signal, row: curr };
 }
 
 // สแกนทั้งชุดข้อมูล คืนทุกจุดที่เกิดสัญญาณ (ใช้กับ backtest)

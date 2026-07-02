@@ -3,7 +3,8 @@
 // outputsize คือจำนวนแท่งย้อนหลังที่ดึงมาคำนวณ backtest stats (ปรับให้ได้ช่วงเวลาย้อนหลังใกล้เคียงกันในแต่ละกรอบ)
 
 const TIMEFRAMES = [
-  { key: "15min", interval: "15min", label: "15 นาที", outputsize: 2000 }, // ~20 วัน
+  { key: "15min", interval: "15min", label: "15 นาที", outputsize: 2000 }, // ~20 วัน — เช็คทุก 15 นาที = เท่ากับความยาวแท่ง เตือนล่วงหน้าไม่ได้ ส่งสัญญาณจริงทันที
+  { key: "30min", interval: "30min", label: "30 นาที", outputsize: 2500 }, // ~52 วัน — เช็คทุก 15 นาที = ครึ่งนึงของแท่ง ได้ "จับตา" ล่วงหน้าจริงประมาณ 15 นาทีก่อนแท่งปิด
   { key: "1h", interval: "1h", label: "1 ชั่วโมง", outputsize: 3000 }, // ~125 วัน
   { key: "4h", interval: "4h", label: "4 ชั่วโมง", outputsize: 1500 }, // ~250 วัน
   { key: "1day", interval: "1day", label: "1 วัน", outputsize: 500 }, // ~500 วัน
