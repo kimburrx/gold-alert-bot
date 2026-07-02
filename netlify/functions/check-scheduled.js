@@ -2,7 +2,7 @@
 // เช็คทีละกรอบเวลา (15min, 1h, 4h, 1day) แยกจากกันอิสระ แต่ละกรอบมี "ไม้ที่เปิดอยู่" ของตัวเอง
 // ส่ง Telegram เฉพาะตอนสัญญาณของกรอบนั้นเปลี่ยนจากครั้งก่อน (กันแจ้งเตือนซ้ำ)
 
-const { getStore } = require("@netlify/blobs");
+const { getBotStore } = require("./lib/store");
 const { fetchOhlc } = require("./lib/twelvedata");
 const { computeIndicators, detectSignal, generateAllSignals, computeSlTp } = require("./lib/indicators");
 const { simulateTrades, summarizeByEntrySignal } = require("./lib/backtestCore");
@@ -97,7 +97,7 @@ async function processTimeframe(tf, store) {
 }
 
 exports.handler = async () => {
-  const store = getStore("gold-bot-state");
+  const store = getBotStore();
   const results = [];
 
   for (const tf of TIMEFRAMES) {

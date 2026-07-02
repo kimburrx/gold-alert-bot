@@ -2,7 +2,7 @@
 // เรียกผ่าน: GET /.netlify/functions/check
 // ถ้าอยากทดสอบส่งข้อความจริง (เฉพาะกรอบ 1h): GET /.netlify/functions/check?sendTest=1
 
-const { getStore } = require("@netlify/blobs");
+const { getBotStore } = require("./lib/store");
 const { fetchOhlc } = require("./lib/twelvedata");
 const { computeIndicators, detectSignal } = require("./lib/indicators");
 const { sendTelegramMessage, formatAlert } = require("./lib/telegram");
@@ -10,7 +10,7 @@ const { TIMEFRAMES } = require("./lib/timeframes");
 
 exports.handler = async (event) => {
   try {
-    const store = getStore("gold-bot-state");
+    const store = getBotStore();
     const timeframeResults = [];
     let testMessageResult = null;
     const sendTest = event.queryStringParameters && event.queryStringParameters.sendTest;
