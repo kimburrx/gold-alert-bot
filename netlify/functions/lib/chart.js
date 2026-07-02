@@ -6,6 +6,15 @@ async function buildChartImageUrl(bars, signal, entryPrice, timeframeLabel) {
   const N = 60;
   const recent = bars.slice(-N);
 
+  // สำคัญ: ต้องแปลง datetime เป็นตัวเลข timestamp (ms) ไม่ใช่ string ธรรมดา
+  // เพราะ Chart.js time scale ฝั่ง QuickChart พาร์ส string วันที่แบบ "YYYY-MM-DD HH:mm:ss" ไม่ได้เสมอไป
+  // ผลคือแกน x หาตำแหน่งไม่ได้ กราฟเลยว่างเปล่า (ไม่มีแท่งเทียน/เส้น EMA ขึ้นมาให้เห็นเลย)
+  // กรอบ 1 วันขึ้นไป TwelveData จะให้แค่ "YYYY-MM-DD" (ไม่มีเวลา) ต้องเติมเวลาเองก่อนแปลง ไม่งั้น parse ไม่ผ่าน
+  const toTs = (datetime) => {
+    const iso = datetime.includes(" ") ? datetime.replace(" ", "T") + "Z" : `${datetime}T00:00:00Z`;
+    return new Date(iso).getTime();
+  };
+
   const config = {
     type: "candlestick",
     data: {
@@ -14,7 +23,7 @@ async function buildChartImageUrl(bars, signal, entryPrice, timeframeLabel) {
           label: "XAU/USD",
           type: "candlestick",
           data: recent.map((b) => ({
-            x: b.datetime,
+            x: toTs(b.datetime),
             o: Number(b.open.toFixed(2)),
             h: Number(b.high.toFixed(2)),
             l: Number(b.low.toFixed(2)),
@@ -24,7 +33,7 @@ async function buildChartImageUrl(bars, signal, entryPrice, timeframeLabel) {
         {
           label: "EMA20",
           type: "line",
-          data: recent.map((b) => ({ x: b.datetime, y: Number(b.ema_fast.toFixed(2)) })),
+          data: recent.map((b) => ({ x: toTs(b.datetime), y: Number(b.ema_fast.toFixed(2)) })),
           borderColor: "#2563eb",
           borderWidth: 1.5,
           pointRadius: 0,
@@ -33,7 +42,7 @@ async function buildChartImageUrl(bars, signal, entryPrice, timeframeLabel) {
         {
           label: "EMA50",
           type: "line",
-          data: recent.map((b) => ({ x: b.datetime, y: Number(b.ema_slow.toFixed(2)) })),
+          data: recent.map((b) => ({ x: toTs(b.datetime), y: Number(b.ema_slow.toFixed(2)) })),
           borderColor: "#dc2626",
           borderWidth: 1.5,
           pointRadius: 0,
@@ -50,7 +59,7 @@ async function buildChartImageUrl(bars, signal, entryPrice, timeframeLabel) {
         legend: { display: true, position: "bottom" },
       },
       scales: {
-        x: { type: "timeseries", ticks: { maxTicksLimit: 8 } },
+        x: { type: "time", ticks: { maxTicksLimit: 8 } },
         y: {},
       },
     },
