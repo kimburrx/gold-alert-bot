@@ -21,16 +21,19 @@
   .muted { color: #888; font-size: 13px; }
   .error { color: #b3261e; background: #fdecea; padding: 10px; border-radius: 8px; font-size: 13px; }
   .ok { color: #0a7a2f; background: #eaf7ed; padding: 10px; border-radius: 8px; font-size: 13px; }
+  .strategy-block { border: 1px solid #eee; border-radius: 8px; padding: 10px 12px; margin-top: 8px; }
+  .strategy-block .name { font-size: 13px; font-weight: bold; margin: 0 0 6px; }
+  .tf-block { border-top: 1px solid #eee; padding-top: 12px; margin-top: 12px; }
 </style>
 </head>
 <body>
 
 <h1>🥇 Gold Alert Bot — แดชบอร์ด</h1>
-<p class="muted">เฝ้าราคา XAU/USD พร้อมกัน 4 กรอบเวลา (15 นาที / 1 ชั่วโมง / 4 ชั่วโมง / 1 วัน) วิเคราะห์ด้วย EMA20/EMA50 + RSI14 แล้วส่งแจ้งเตือนเข้า Telegram ทุก 15 นาที<br>
+<p class="muted">เฝ้าราคา XAU/USD พร้อมกัน 4 กรอบเวลา (15 นาที / 1 ชั่วโมง / 4 ชั่วโมง / 1 วัน) x 2 กลยุทธ์ (เทรนด์ EMA20/EMA50+RSI14, แนวรับ-แนวต้าน: ทะลุ/ย่อ ตามเทรนด์) ทั้งสองกลยุทธ์เทรดตามทิศทางเทรนด์หลักเท่านั้น ไม่เทรดสวนเทรนด์ แล้วส่งแจ้งเตือนเข้า Telegram ทุก 15 นาที<br>
 บอทนี้ไม่เทรดเองและไม่แตะบัญชีคุณ เป็นเครื่องมือช่วยดูสัญญาณเท่านั้น ไม่ใช่คำแนะนำการลงทุน — กรอบสั้น (15 นาที) สัญญาณถี่แต่หลอกง่ายกว่ากรอบยาว (4 ชั่วโมง/1 วัน)</p>
 
 <div class="card">
-  <h2>สถานะล่าสุด (ทุกกรอบเวลา)</h2>
+  <h2>สถานะล่าสุด (ทุกกรอบเวลา x ทุกกลยุทธ์)</h2>
   <div id="status-area">
     <p class="muted">กำลังโหลด...</p>
   </div>
@@ -40,7 +43,7 @@
 </div>
 
 <div class="card">
-  <h2>ทดสอบย้อนหลัง (Backtest — กรอบ 1H)</h2>
+  <h2>ทดสอบย้อนหลัง (Backtest — กรอบ 1H, กลยุทธ์เทรนด์ EMA/RSI)</h2>
   <label>จำนวนแท่งย้อนหลัง</label>
   <input id="outputsize" value="3000">
   <button onclick="runBacktest()">📊 รัน Backtest</button>
@@ -55,33 +58,43 @@ function renderOpenPosition(p) {
   const pnlClass = p.unrealizedPnlPoints > 0 ? 'signal-buy' : p.unrealizedPnlPoints < 0 ? 'signal-sell' : '';
   const sign = p.unrealizedPnlPoints >= 0 ? '+' : '';
   return `
-    <div class="row" style="margin-top:14px; border-top:1px solid #eee; padding-top:14px;">
+    <div class="row" style="margin-top:8px; border-top:1px dashed #eee; padding-top:8px;">
       <div><label>ไม้ที่เปิดอยู่</label>${dirLabel}</div>
       <div><label>ราคาเข้า</label>${p.entryPrice} (${new Date(p.entryTime).toLocaleString('th-TH')})</div>
       <div><label>กำไร/ขาดทุนตอนนี้ (ยังไม่ปิด)</label><span class="${pnlClass}">${sign}${p.unrealizedPnlPoints} จุด (${sign}${p.unrealizedPnlPct}%)</span></div>
     </div>`;
 }
 
-function renderTimeframeBlock(tf) {
-  const signalHtml = tf.signal === 'BUY'
-    ? '<span class="signal-buy">📈 BUY</span>'
-    : tf.signal === 'SELL'
-      ? '<span class="signal-sell">📉 SELL</span>'
+function patternLabel(s) {
+  if (!s.type) return '';
+  const dir = s.signal === 'BUY' ? (s.type === 'breakout' ? 'ทะลุแนวต้าน' : 'ย่อซื้อที่แนวรับ') : (s.type === 'breakout' ? 'ทะลุแนวรับ' : 'เด้งขายที่แนวต้าน');
+  return ` — ${dir} ${s.level}`;
+}
+
+function renderStrategyBlock(s) {
+  const signalHtml = s.signal === 'BUY'
+    ? `<span class="signal-buy">📈 BUY${patternLabel(s)}</span>`
+    : s.signal === 'SELL'
+      ? `<span class="signal-sell">📉 SELL${patternLabel(s)}</span>`
       : 'ยังไม่มีสัญญาณ';
   return `
-    <div style="border-top:1px solid #eee; padding-top:12px; margin-top:12px;">
+    <div class="strategy-block">
+      <p class="name">${s.label}</p>
+      <div>${signalHtml}</div>
+      ${s.openPosition ? renderOpenPosition(s.openPosition) : ''}
+    </div>`;
+}
+
+function renderTimeframeBlock(tf) {
+  return `
+    <div class="tf-block">
       <p style="font-weight:bold; margin:0 0 8px;">กรอบ ${tf.label}</p>
       <div class="row">
         <div><label>ราคาปิดล่าสุด</label>${tf.price}</div>
         <div><label>RSI(14)</label>${tf.rsi}</div>
-        <div><label>สัญญาณ</label>${signalHtml}</div>
+        <div><label>EMA20 / EMA50</label>${tf.emaFast} / ${tf.emaSlow}</div>
       </div>
-      <div class="row">
-        <div><label>EMA20</label>${tf.emaFast}</div>
-        <div><label>EMA50</label>${tf.emaSlow}</div>
-        <div></div>
-      </div>
-      ${tf.openPosition ? renderOpenPosition(tf.openPosition) : ''}
+      ${tf.strategies.map(renderStrategyBlock).join('')}
     </div>`;
 }
 

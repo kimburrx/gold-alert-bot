@@ -1,34 +1,34 @@
 // check-scheduled.js — รันอัตโนมัติทุก 15 นาทีตามที่ตั้งไว้ใน netlify.toml
-// เช็คทีละกรอบเวลา (15min, 1h, 4h, 1day) แยกจากกันอิสระ แต่ละกรอบมี "ไม้ที่เปิดอยู่" ของตัวเอง
-// ส่ง Telegram เฉพาะตอนสัญญาณของกรอบนั้นเปลี่ยนจากครั้งก่อน (กันแจ้งเตือนซ้ำ)
+// เช็คทีละกรอบเวลา (15min, 1h, 4h, 1day) x ทีละกลยุทธ์ (เทรนด์ EMA/RSI, แนวรับ-แนวต้าน) แยกจากกันอิสระ
+// แต่ละกรอบเวลา+กลยุทธ์ มี "ไม้ที่เปิดอยู่" ของตัวเอง ดึงราคาแค่ครั้งเดียวต่อกรอบเวลาแล้วเอาไปเช็คทุกกลยุทธ์ (ประหยัด API credit)
+// ส่ง Telegram เฉพาะตอนสัญญาณของกรอบ+กลยุทธ์นั้นเปลี่ยนจากครั้งก่อน (กันแจ้งเตือนซ้ำ)
 
 const { getBotStore } = require("./lib/store");
 const { fetchOhlc } = require("./lib/twelvedata");
-const { computeIndicators, detectSignal, generateAllSignals, computeSlTp } = require("./lib/indicators");
+const { computeIndicators, computeSlTp } = require("./lib/indicators");
 const { simulateTrades, summarizeByEntrySignal } = require("./lib/backtestCore");
 const { sendTelegramMessage, sendTelegramPhoto, formatAlert, formatCloseAlert } = require("./lib/telegram");
 const { buildChartImageUrl } = require("./lib/chart");
 const { TIMEFRAMES } = require("./lib/timeframes");
+const { STRATEGIES } = require("./lib/strategies");
 
 const MAX_LIVE_HISTORY = 500; // กันไม่ให้ Blobs โตไม่มีที่สิ้นสุด
 
-async function processTimeframe(tf, store) {
-  const bars = await fetchOhlc({ interval: tf.interval, outputsize: tf.outputsize });
-  const withIndicators = computeIndicators(bars);
-  const { signal, row } = detectSignal(withIndicators);
+async function processStrategy(tf, strategy, withIndicators, store) {
+  const { signal, type, level, row } = strategy.detect(withIndicators);
 
   if (!signal) {
-    return `[${tf.key}] no signal`;
+    return `[${tf.key}/${strategy.key}] no signal`;
   }
 
-  const posKey = `open_position_${tf.key}`;
-  const historyKey = `live_trade_history_${tf.key}`;
+  const posKey = `open_position_${tf.key}_${strategy.key}`;
+  const historyKey = `live_trade_history_${tf.key}_${strategy.key}`;
 
   const openPosRaw = await store.get(posKey);
   const openPos = openPosRaw ? JSON.parse(openPosRaw) : null;
 
   if (openPos && openPos.signal === signal) {
-    return `[${tf.key}] signal ${signal} already notified, position still open`;
+    return `[${tf.key}/${strategy.key}] signal ${signal} already notified, position still open`;
   }
 
   const liveHistoryRaw = await store.get(historyKey);
@@ -36,7 +36,7 @@ async function processTimeframe(tf, store) {
 
   // ถ้ามีไม้เปิดอยู่แล้วสัญญาณใหม่สวนทาง ให้สรุปผลไม้เดิมก่อน แล้วบันทึกผลจริงลงประวัติสะสม
   if (openPos) {
-    const closeMessage = formatCloseAlert(openPos, row, tf.label);
+    const closeMessage = formatCloseAlert(openPos, row, tf.label, strategy.label);
     await sendTelegramMessage(closeMessage);
 
     const isLong = openPos.signal === "BUY";
@@ -59,16 +59,18 @@ async function processTimeframe(tf, store) {
     await store.set(historyKey, JSON.stringify(liveHistory));
   }
 
-  // คำนวณจุด stop-loss / take-profit แนะนำ จาก ATR ปัจจุบัน
+  // คำนวณจุด stop-loss / take-profit แนะนำ จาก ATR ปัจจุบัน (ใช้สูตรเดียวกันทุกกลยุทธ์)
   const slTp = computeSlTp(signal, row.close, row.atr);
 
-  // สถิติ backtest (จำลองย้อนหลังจากข้อมูลชุดที่เพิ่งดึงมา ไม่ต้องยิง API เพิ่ม)
-  const allSignals = generateAllSignals(withIndicators);
+  // สถิติ backtest ของกลยุทธ์นี้ (จำลองย้อนหลังจากข้อมูลชุดที่เพิ่งดึงมา ไม่ต้องยิง API เพิ่ม)
+  const allSignals = strategy.generateAll(withIndicators);
   const backtestTrades = simulateTrades(allSignals);
   const backtestStatsByType = summarizeByEntrySignal(backtestTrades);
 
-  // สถิติของจริงที่บอทเคยส่งสัญญาณแบบนี้ไปแล้ว สะสมตั้งแต่เริ่มใช้งาน (แยกตามกรอบเวลา)
+  // สถิติของจริงที่บอทเคยส่งสัญญาณแบบนี้ไปแล้ว สะสมตั้งแต่เริ่มใช้งาน (แยกตามกรอบเวลา+กลยุทธ์)
   const liveStatsByType = summarizeByEntrySignal(liveHistory);
+
+  const strategyInfo = { label: strategy.label, type, level };
 
   const entryMessage = formatAlert(
     signal,
@@ -76,16 +78,18 @@ async function processTimeframe(tf, store) {
     slTp,
     backtestStatsByType[signal],
     liveStatsByType[signal],
-    tf.label
+    tf.label,
+    strategyInfo
   );
 
   // สร้างรูปกราฟตอนเกิดสัญญาณ แล้วส่งเป็นรูปก่อน ตามด้วยข้อความรายละเอียด
   try {
-    const chartUrl = await buildChartImageUrl(withIndicators, signal, row.close, tf.label);
-    const shortCaption = `${signal === "BUY" ? "📈 BUY" : "📉 SELL"} XAU/USD (${tf.label}) ที่ ${row.close.toFixed(2)}`;
+    const chartLabel = `${tf.label} · ${strategy.label}`;
+    const chartUrl = await buildChartImageUrl(withIndicators, signal, row.close, chartLabel);
+    const shortCaption = `${signal === "BUY" ? "📈 BUY" : "📉 SELL"} XAU/USD (${chartLabel}) ที่ ${row.close.toFixed(2)}`;
     await sendTelegramPhoto(chartUrl, shortCaption);
   } catch (chartErr) {
-    console.error(`[${tf.key}] สร้าง/ส่งรูปกราฟไม่สำเร็จ:`, chartErr.message);
+    console.error(`[${tf.key}/${strategy.key}] สร้าง/ส่งรูปกราฟไม่สำเร็จ:`, chartErr.message);
     // ไม่ให้ทั้งฟังก์ชันล้มเหลวแค่เพราะรูปกราฟมีปัญหา ยังส่งข้อความหลักต่อได้
   }
 
@@ -93,7 +97,24 @@ async function processTimeframe(tf, store) {
 
   await store.set(posKey, JSON.stringify({ signal, entryPrice: row.close, entryTime: row.datetime }));
 
-  return `[${tf.key}] sent ${signal} alert`;
+  return `[${tf.key}/${strategy.key}] sent ${signal} alert`;
+}
+
+async function processTimeframe(tf, store) {
+  const bars = await fetchOhlc({ interval: tf.interval, outputsize: tf.outputsize });
+  const withIndicators = computeIndicators(bars);
+
+  const results = [];
+  for (const strategy of STRATEGIES) {
+    try {
+      const r = await processStrategy(tf, strategy, withIndicators, store);
+      results.push(r);
+    } catch (err) {
+      console.error(`[${tf.key}/${strategy.key}] error:`, err);
+      results.push(`[${tf.key}/${strategy.key}] error: ${err.message}`);
+    }
+  }
+  return results.join(" | ");
 }
 
 exports.handler = async () => {

@@ -56,12 +56,27 @@ function formatStatsBlock(title, stats) {
 // backtestStats: สถิติจากการจำลองย้อนหลัง (backtest) { totalTrades, winRatePct, avgPnlPct } (optional)
 // liveStats: สถิติจริงที่บอทเคยส่งสัญญาณแบบนี้ไปแล้วตั้งแต่เริ่มใช้งาน (สะสมไปเรื่อยๆ) (optional)
 // timeframeLabel: ข้อความกรอบเวลา เช่น "15 นาที", "1 ชั่วโมง", "4 ชั่วโมง", "1 วัน"
-function formatAlert(signal, row, slTp, backtestStats, liveStats, timeframeLabel) {
+// strategyInfo: { label, type, level } (optional) — บอกว่าสัญญาณนี้มาจากกลยุทธ์ไหน
+//   type: "breakout" | "bounce" | null, level: ราคาแนวรับ/แนวต้านที่เกี่ยวข้อง
+function formatAlert(signal, row, slTp, backtestStats, liveStats, timeframeLabel, strategyInfo) {
   const arrow = signal === "BUY" ? "📈 BUY" : "📉 SELL";
+
+  const strategyLine = strategyInfo && strategyInfo.label ? `กลยุทธ์: ${strategyInfo.label}\n` : "";
+
+  let patternLine = "";
+  if (strategyInfo && strategyInfo.type === "breakout") {
+    const levelName = signal === "BUY" ? "แนวต้าน" : "แนวรับ";
+    patternLine = `รูปแบบ: ทะลุ${levelName} ${strategyInfo.level.toFixed(2)} ไปต่อทาง ${signal}\n`;
+  } else if (strategyInfo && strategyInfo.type === "bounce") {
+    const desc = signal === "BUY" ? `ย่อซื้อที่แนวรับ ${strategyInfo.level.toFixed(2)} (ตามเทรนด์ขาขึ้น)` : `เด้งขายที่แนวต้าน ${strategyInfo.level.toFixed(2)} (ตามเทรนด์ขาลง)`;
+    patternLine = `รูปแบบ: ${desc}\n`;
+  }
 
   let msg =
     `[Gold Alert] ${arrow} สัญญาณใหม่ XAU/USD\n` +
+    strategyLine +
     `กรอบเวลา: ${timeframeLabel || "1 ชั่วโมง"}\n` +
+    patternLine +
     `เวลาแท่งเทียน: ${row.datetime}\n` +
     `ราคาเข้า: ${row.close.toFixed(2)}\n` +
     `EMA20: ${row.ema_fast.toFixed(2)} / EMA50: ${row.ema_slow.toFixed(2)}\n` +
@@ -85,15 +100,17 @@ function formatAlert(signal, row, slTp, backtestStats, liveStats, timeframeLabel
 }
 
 // สรุปผลไม้ก่อนหน้าตอนที่มีสัญญาณใหม่มาปิดไม้เดิม
-function formatCloseAlert(openPos, row, timeframeLabel) {
+// strategyLabel: ชื่อกลยุทธ์ (optional) ต่อท้ายในหัวข้อความให้รู้ว่าไม้นี้มาจากกลยุทธ์ไหน
+function formatCloseAlert(openPos, row, timeframeLabel, strategyLabel) {
   const isLong = openPos.signal === "BUY";
   const pnlPoints = isLong ? row.close - openPos.entryPrice : openPos.entryPrice - row.close;
   const pnlPct = (pnlPoints / openPos.entryPrice) * 100;
   const result = pnlPoints > 0 ? "✅ กำไร (WIN)" : pnlPoints < 0 ? "❌ ขาดทุน (LOSS)" : "➖ เท่าทุน";
   const posLabel = isLong ? "BUY (long)" : "SELL (short)";
+  const stratSuffix = strategyLabel ? ` · ${strategyLabel}` : "";
 
   return (
-    `[Gold Alert] ปิดไม้ก่อนหน้า (กรอบ ${timeframeLabel || ""}) — ${result}\n` +
+    `[Gold Alert] ปิดไม้ก่อนหน้า (กรอบ ${timeframeLabel || ""}${stratSuffix}) — ${result}\n` +
     `ทิศทาง: ${posLabel}\n` +
     `เข้า: ${openPos.entryPrice.toFixed(2)} (${openPos.entryTime})\n` +
     `ออก: ${row.close.toFixed(2)} (${row.datetime})\n` +
