@@ -1,0 +1,27 @@
+// strategies.js — รวมทุกกลยุทธ์ที่บอทเช็คในแต่ละกรอบเวลา
+// เพิ่มกลยุทธ์ใหม่ในอนาคตได้ง่ายๆ แค่เพิ่มรายการในอาเรย์นี้ (detect/generateAll ต้องคืนรูปแบบเดียวกัน)
+
+const { detectSignal, generateAllSignals } = require("./indicators");
+const { detectSrSignal, generateAllSrSignals } = require("./srSignals");
+
+const STRATEGIES = [
+  {
+    key: "trend",
+    label: "เทรนด์ EMA20/50 + RSI",
+    // bars ต้องผ่าน computeIndicators() มาก่อน (มี ema_fast/ema_slow/rsi/atr)
+    // hasOpenPosition: ถ้ายังไม่เคยมีไม้เปิดอยู่ของกรอบนี้เลย จะเช็คสถานะปัจจุบันด้วย ไม่ใช่แค่จุดตัดสดๆ
+    detect: (bars, hasOpenPosition) => {
+      const r = detectSignal(bars, hasOpenPosition);
+      return { signal: r.signal, type: null, level: null, row: r.row };
+    },
+    generateAll: (bars) => generateAllSignals(bars),
+  },
+  {
+    key: "sr",
+    label: "แนวรับ-แนวต้าน (ทะลุ/ย่อ ตามเทรนด์)",
+    detect: (bars, hasOpenPosition) => detectSrSignal(bars, undefined, hasOpenPosition),
+    generateAll: (bars) => generateAllSrSignals(bars),
+  },
+];
+
+module.exports = { STRATEGIES };
